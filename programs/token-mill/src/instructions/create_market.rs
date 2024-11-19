@@ -150,7 +150,7 @@ impl<'info> CreateMarket<'info> {
         market_seeds: &[&[u8]],
     ) -> Result<()> {
         let cpi_accounts = TokenMetadataInitialize {
-            token_program_id: self.token_program.to_account_info(),
+            program_id: self.token_program.to_account_info(),
             mint: self.base_token_mint.to_account_info(),
             metadata: self.base_token_mint.to_account_info(),
             mint_authority: self.market.to_account_info(),
