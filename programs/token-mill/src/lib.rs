@@ -34,25 +34,25 @@ pub mod token_mill {
         )
     }
 
-    pub fn create_market(
-        ctx: Context<CreateMarket>,
-        name: String,
-        symbol: String,
-        uri: String,
-        total_supply: u64,
-        creator_fee_share: u16,
-        staking_fee_share: u16,
-    ) -> Result<()> {
-        instructions::create_market::handler(
-            ctx,
-            name,
-            symbol,
-            uri,
-            total_supply,
-            creator_fee_share,
-            staking_fee_share,
-        )
-    }
+    // pub fn create_market(
+    //     ctx: Context<CreateMarket>,
+    //     name: String,
+    //     symbol: String,
+    //     uri: String,
+    //     total_supply: u64,
+    //     creator_fee_share: u16,
+    //     staking_fee_share: u16,
+    // ) -> Result<()> {
+    //     instructions::create_market::handler(
+    //         ctx,
+    //         name,
+    //         symbol,
+    //         uri,
+    //         total_supply,
+    //         creator_fee_share,
+    //         staking_fee_share,
+    //     )
+    // }
 
     pub fn set_market_prices(
         ctx: Context<MarketSettingsUpdate>,

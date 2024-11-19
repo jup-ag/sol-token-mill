@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constant::STAKING_SCALE;
+use crate::{constant::STAKING_SCALE, errors::TokenMillError};
 
 pub const MARKET_STAKING_PDA_SEED: &str = "market_staking";
 pub const STAKING_POSITION_PDA_SEED: &str = "stake_position";
@@ -62,7 +62,8 @@ impl StakePosition {
                 u128::from(total_shares)
                     * (acc_reward_amount_per_share - self.acc_reward_amount_per_share)
                     / STAKING_SCALE,
-            )?;
+            )
+            .map_err(|_| TokenMillError::MathError)?;
         }
 
         self.acc_reward_amount_per_share = acc_reward_amount_per_share;

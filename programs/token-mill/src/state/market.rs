@@ -56,16 +56,19 @@ impl MarketFees {
     ) -> Result<(u64, u64, u64, u64)> {
         let creator_fee = u64::try_from(
             u128::from(swap_fee) * u128::from(self.creator_fee_share) / MAX_BPS as u128,
-        )?;
+        )
+        .map_err(|_| TokenMillError::MathError)?;
         let staking_fee = u64::try_from(
             u128::from(swap_fee) * u128::from(self.staking_fee_share) / MAX_BPS as u128,
-        )?;
+        )
+        .map_err(|_| TokenMillError::MathError)?;
         let remaining_fee = swap_fee - creator_fee - staking_fee;
 
         let referral_fee = if let Some(referral_fee_share) = referral_fee_share {
             u64::try_from(
                 u128::from(remaining_fee) * u128::from(referral_fee_share) / MAX_BPS as u128,
-            )?
+            )
+            .map_err(|_| TokenMillError::MathError)?
         } else {
             0
         };
@@ -110,7 +113,8 @@ impl Market {
         self.base_reserve = total_supply;
         self.width_scaled = u64::try_from(
             u128::from(total_supply / INTERVAL_NUMBER) * SCALE / u128::from(BASE_PRECISION),
-        )?;
+        )
+        .map_err(|_| TokenMillError::MathError)?;
 
         self.fees.creator_fee_share = creator_fee_share;
         self.fees.staking_fee_share = staking_fee_share;
@@ -191,7 +195,8 @@ impl Market {
 
         let mut normalized_quote_amount = 0;
 
-        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))?;
+        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))
+            .map_err(|_| TokenMillError::MathError)?;
         let mut interval_supply_already_used = normalized_supply % u128::from(self.width_scaled);
 
         let mut price_0 = price_curve[i];
@@ -249,7 +254,8 @@ impl Market {
         let mut normalized_quote_amount_left = u128::from(quote_amount) * SCALE / quote_precision;
         let mut normalized_base_amount = 0;
 
-        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))?;
+        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))
+            .map_err(|_| TokenMillError::MathError)?;
         let mut interval_supply_available = normalized_supply % u128::from(self.width_scaled);
 
         if interval_supply_available == 0 {
@@ -306,7 +312,8 @@ impl Market {
         let mut normalized_quote_amount_left = u128::from(quote_amount) * SCALE / quote_precision;
         let mut normalized_base_amount = 0;
 
-        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))?;
+        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))
+            .map_err(|_| TokenMillError::MathError)?;
         let mut interval_supply_already_used = normalized_supply % u128::from(self.width_scaled);
 
         let mut price_0 = price_curve[i];

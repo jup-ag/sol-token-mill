@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use ruint::aliases::U256;
 
-use crate::constant::SCALE;
+use crate::{constant::SCALE, errors::TokenMillError};
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum Rounding {
@@ -24,7 +24,7 @@ pub fn get_delta_base_in(
         2 * SCALE * width_scaled,
         Rounding::Down,
     )
-    .unwrap();
+    .ok_or(TokenMillError::MathError)?;
 
     if remaining_quote >= current_quote {
         Ok((interval_supply_available, current_quote))
@@ -58,7 +58,7 @@ pub fn get_delta_base_out(
         2 * SCALE * width_scaled,
         Rounding::Down,
     )
-    .unwrap();
+    .ok_or(TokenMillError::MathError)?;
 
     let next_quote = div((price_0 + price_1) * width_scaled, 2 * SCALE, Rounding::Up)?;
 
@@ -121,5 +121,5 @@ pub fn div(a: u128, b: u128, rounding: Rounding) -> Result<u64> {
         0
     };
 
-    Ok(u64::try_from(a / b)? + rounding)
+    Ok(u64::try_from(a / b).map_err(|_| TokenMillError::MathError)? + rounding)
 }

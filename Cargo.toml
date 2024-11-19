@@ -4,8 +4,8 @@ resolver = "2"
 
 [workspace.dependencies]
 # Anchor
-anchor-lang = { version = "0.30.1", features = ["event-cpi"] }
-anchor-spl = "0.30.1"
+anchor-lang = { version = "0.29.0", features = ["event-cpi"] }
+anchor-spl = "0.29.0"
 
 # Program deps
 bytemuck = { version = "1.16.1", features = ["derive", "min_const_generics"] }
