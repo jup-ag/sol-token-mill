@@ -199,7 +199,7 @@ impl Market {
             .map_err(|_| TokenMillError::MathError)?;
         let mut interval_supply_already_used = normalized_supply % u128::from(self.width_scaled);
 
-        let mut price_0 = price_curve[i];
+        let mut price_0 = *price_curve.get(i).ok_or(TokenMillError::MathError)?;
         i += 1;
 
         while normalized_base_amount_left > 0 && i < PRICES_LENGTH {
