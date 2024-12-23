@@ -54,29 +54,45 @@ impl MarketFees {
         swap_fee: u64,
         referral_fee_share: Option<u16>,
     ) -> Result<(u64, u64, u64, u64)> {
-        let creator_fee = u64::try_from(
-            u128::from(swap_fee) * u128::from(self.creator_fee_share) / MAX_BPS as u128,
-        )
-        .map_err(|_| TokenMillError::MathError)?;
-        let staking_fee = u64::try_from(
-            u128::from(swap_fee) * u128::from(self.staking_fee_share) / MAX_BPS as u128,
-        )
-        .map_err(|_| TokenMillError::MathError)?;
-        let remaining_fee = swap_fee - creator_fee - staking_fee;
+        let creator_fee = u128::from(swap_fee)
+            .checked_mul(u128::from(self.creator_fee_share))
+            .and_then(|v| v.checked_div(MAX_BPS as u128))
+            .and_then(|v| u64::try_from(v).ok())
+            .ok_or(TokenMillError::MathError)?;
+
+        let staking_fee = u128::from(swap_fee)
+            .checked_mul(u128::from(self.staking_fee_share))
+            .and_then(|v| v.checked_div(MAX_BPS as u128))
+            .and_then(|v| u64::try_from(v).ok())
+            .ok_or(TokenMillError::MathError)?;
+
+        let remaining_fee = swap_fee
+            .checked_sub(creator_fee)
+            .and_then(|v| v.checked_sub(staking_fee))
+            .ok_or(TokenMillError::MathError)?;
 
         let referral_fee = if let Some(referral_fee_share) = referral_fee_share {
-            u64::try_from(
-                u128::from(remaining_fee) * u128::from(referral_fee_share) / MAX_BPS as u128,
-            )
-            .map_err(|_| TokenMillError::MathError)?
+            u128::from(remaining_fee)
+                .checked_mul(u128::from(referral_fee_share))
+                .and_then(|v| v.checked_div(MAX_BPS as u128))
+                .and_then(|v| u64::try_from(v).ok())
+                .ok_or(TokenMillError::MathError)?
         } else {
             0
         };
 
-        let protocol_fee = remaining_fee - referral_fee;
+        let protocol_fee = remaining_fee
+            .checked_sub(referral_fee)
+            .ok_or(TokenMillError::MathError)?;
 
-        self.pending_creator_fees += creator_fee;
-        self.pending_staking_fees += staking_fee;
+        self.pending_creator_fees = self
+            .pending_creator_fees
+            .checked_add(creator_fee)
+            .ok_or(TokenMillError::MathError)?;
+        self.pending_staking_fees = self
+            .pending_staking_fees
+            .checked_add(staking_fee)
+            .ok_or(TokenMillError::MathError)?;
 
         Ok((creator_fee, staking_fee, protocol_fee, referral_fee))
     }
@@ -97,8 +113,16 @@ impl Market {
         staking_fee_share: u16,
     ) -> Result<()> {
         if total_supply > MAX_TOTAL_SUPPLY
-            || total_supply / INTERVAL_NUMBER < BASE_PRECISION
-            || (total_supply / INTERVAL_NUMBER) * INTERVAL_NUMBER != total_supply
+            || total_supply
+                .checked_div(INTERVAL_NUMBER)
+                .ok_or(TokenMillError::MathError)?
+                < BASE_PRECISION
+            || total_supply
+                .checked_div(INTERVAL_NUMBER)
+                .ok_or(TokenMillError::MathError)?
+                .checked_mul(INTERVAL_NUMBER)
+                .ok_or(TokenMillError::MathError)?
+                != total_supply
         {
             return Err(TokenMillError::InvalidTotalSupply.into());
         }
@@ -111,10 +135,15 @@ impl Market {
         self.quote_token_decimals = quote_token_decimals;
         self.total_supply = total_supply;
         self.base_reserve = total_supply;
-        self.width_scaled = u64::try_from(
-            u128::from(total_supply / INTERVAL_NUMBER) * SCALE / u128::from(BASE_PRECISION),
+        self.width_scaled = u128::from(
+            total_supply
+                .checked_div(INTERVAL_NUMBER)
+                .ok_or(TokenMillError::MathError)?,
         )
-        .map_err(|_| TokenMillError::MathError)?;
+        .checked_mul(SCALE)
+        .and_then(|v| v.checked_div(u128::from(BASE_PRECISION)))
+        .and_then(|v| u64::try_from(v).ok())
+        .ok_or(TokenMillError::MathError)?;
 
         self.fees.creator_fee_share = creator_fee_share;
         self.fees.staking_fee_share = staking_fee_share;
@@ -158,7 +187,9 @@ impl Market {
     }
 
     pub fn circulating_supply(&self) -> u64 {
-        self.total_supply - self.base_reserve
+        self.total_supply
+            .checked_sub(self.base_reserve)
+            .unwrap_or(0)
     }
 
     pub fn get_quote_amount(
@@ -169,7 +200,12 @@ impl Market {
         let circulating_supply = self.circulating_supply();
 
         let (supply, rounding) = match swap_amount_type {
-            SwapAmountType::ExactInput => (circulating_supply - base_amount, Rounding::Down),
+            SwapAmountType::ExactInput => (
+                circulating_supply
+                    .checked_sub(base_amount)
+                    .ok_or(TokenMillError::MathError)?,
+                Rounding::Down,
+            ),
             SwapAmountType::ExactOutput => (circulating_supply, Rounding::Up),
         };
 
@@ -188,16 +224,27 @@ impl Market {
             SwapAmountType::ExactOutput => &self.ask_prices,
         };
 
-        let normalized_supply = u128::from(supply) * SCALE / u128::from(BASE_PRECISION);
+        let normalized_supply = u128::from(supply)
+            .checked_mul(SCALE)
+            .and_then(|v| v.checked_div(u128::from(BASE_PRECISION)))
+            .ok_or(TokenMillError::MathError)?;
 
-        let mut normalized_base_amount_left =
-            u128::from(base_amount) * SCALE / u128::from(BASE_PRECISION);
+        let mut normalized_base_amount_left = u128::from(base_amount)
+            .checked_mul(SCALE)
+            .and_then(|v| v.checked_div(u128::from(BASE_PRECISION)))
+            .ok_or(TokenMillError::MathError)?;
 
-        let mut normalized_quote_amount = 0;
+        let mut normalized_quote_amount: u128 = 0;
 
-        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))
-            .map_err(|_| TokenMillError::MathError)?;
-        let mut interval_supply_already_used = normalized_supply % u128::from(self.width_scaled);
+        let mut i = usize::try_from(
+            normalized_supply
+                .checked_div(u128::from(self.width_scaled))
+                .ok_or(TokenMillError::MathError)?,
+        )
+        .map_err(|_| TokenMillError::MathError)?;
+        let mut interval_supply_already_used = normalized_supply
+            .checked_rem(u128::from(self.width_scaled))
+            .ok_or(TokenMillError::MathError)?;
 
         let mut price_0 = *price_curve.get(i).ok_or(TokenMillError::MathError)?;
         i += 1;
@@ -207,20 +254,38 @@ impl Market {
 
             let delta_base = min(
                 normalized_base_amount_left,
-                u128::from(self.width_scaled) - interval_supply_already_used,
+                u128::from(self.width_scaled)
+                    .checked_sub(interval_supply_already_used)
+                    .ok_or(TokenMillError::MathError)?,
             );
 
             let delta_quote = mul_div(
                 delta_base,
-                u128::from(price_1 - price_0) * (delta_base + 2 * interval_supply_already_used)
-                    + 2 * u128::from(price_0) * u128::from(self.width_scaled),
+                u128::from(
+                    price_1
+                        .checked_sub(price_0)
+                        .ok_or(TokenMillError::MathError)?,
+                )
+                .checked_mul(
+                    delta_base
+                        .checked_add(2 * interval_supply_already_used)
+                        .ok_or(TokenMillError::MathError)?,
+                )
+                .and_then(|v| {
+                    v.checked_add(2 * u128::from(price_0) * u128::from(self.width_scaled))
+                })
+                .ok_or(TokenMillError::MathError)?,
                 2 * SCALE * u128::from(self.width_scaled),
                 rounding,
             )
             .ok_or(TokenMillError::MathError)?;
 
-            normalized_base_amount_left -= delta_base;
-            normalized_quote_amount += delta_quote;
+            normalized_base_amount_left = normalized_base_amount_left
+                .checked_sub(delta_base)
+                .ok_or(TokenMillError::MathError)?;
+            normalized_quote_amount = normalized_quote_amount
+                .checked_add(delta_quote)
+                .ok_or(TokenMillError::MathError)?;
 
             interval_supply_already_used = 0;
             price_0 = price_1;
@@ -229,14 +294,19 @@ impl Market {
         }
 
         let base_amount_swapped = base_amount
-            - div(
-                normalized_base_amount_left * u128::from(BASE_PRECISION),
+            .checked_sub(div(
+                normalized_base_amount_left
+                    .checked_mul(u128::from(BASE_PRECISION))
+                    .ok_or(TokenMillError::MathError)?,
                 SCALE,
                 rounding,
-            )?;
+            )?)
+            .ok_or(TokenMillError::MathError)?;
 
         let quote_amount_swapped = div(
-            normalized_quote_amount * u128::pow(10, u32::from(self.quote_token_decimals)),
+            normalized_quote_amount
+                .checked_mul(u128::pow(10, u32::from(self.quote_token_decimals)))
+                .ok_or(TokenMillError::MathError)?,
             SCALE,
             rounding,
         )?;
@@ -248,15 +318,27 @@ impl Market {
         let price_curve = &self.bid_prices;
         let circulating_supply = self.circulating_supply();
 
-        let normalized_supply = u128::from(circulating_supply) * SCALE / u128::from(BASE_PRECISION);
+        let normalized_supply = u128::from(circulating_supply)
+            .checked_mul(SCALE)
+            .and_then(|v| v.checked_div(u128::from(BASE_PRECISION)))
+            .ok_or(TokenMillError::MathError)?;
 
         let quote_precision = u128::pow(10, u32::from(self.quote_token_decimals));
-        let mut normalized_quote_amount_left = u128::from(quote_amount) * SCALE / quote_precision;
-        let mut normalized_base_amount = 0;
+        let mut normalized_quote_amount_left = u128::from(quote_amount)
+            .checked_mul(SCALE)
+            .and_then(|v| v.checked_div(quote_precision))
+            .ok_or(TokenMillError::MathError)?;
+        let mut normalized_base_amount: u128 = 0;
 
-        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))
-            .map_err(|_| TokenMillError::MathError)?;
-        let mut interval_supply_available = normalized_supply % u128::from(self.width_scaled);
+        let mut i = usize::try_from(
+            normalized_supply
+                .checked_div(u128::from(self.width_scaled))
+                .ok_or(TokenMillError::MathError)?,
+        )
+        .map_err(|_| TokenMillError::MathError)?;
+        let mut interval_supply_available = normalized_supply
+            .checked_rem(u128::from(self.width_scaled))
+            .ok_or(TokenMillError::MathError)?;
 
         if interval_supply_available == 0 {
             interval_supply_available = u128::from(self.width_scaled);
@@ -277,8 +359,12 @@ impl Market {
                 normalized_quote_amount_left,
             )?;
 
-            normalized_base_amount += delta_base;
-            normalized_quote_amount_left -= delta_quote;
+            normalized_base_amount = normalized_base_amount
+                .checked_add(delta_base)
+                .ok_or(TokenMillError::MathError)?;
+            normalized_quote_amount_left = normalized_quote_amount_left
+                .checked_sub(delta_quote)
+                .ok_or(TokenMillError::MathError)?;
 
             interval_supply_available = u128::from(self.width_scaled);
             price_1 = price_0;
@@ -287,17 +373,22 @@ impl Market {
         }
 
         let base_amount_swapped = div(
-            normalized_base_amount * u128::from(BASE_PRECISION),
+            normalized_base_amount
+                .checked_mul(u128::from(BASE_PRECISION))
+                .ok_or(TokenMillError::MathError)?,
             SCALE,
             Rounding::Up,
         )?;
 
         let quote_amount_swapped = quote_amount
-            - div(
-                normalized_quote_amount_left * quote_precision,
+            .checked_sub(div(
+                normalized_quote_amount_left
+                    .checked_mul(quote_precision)
+                    .ok_or(TokenMillError::MathError)?,
                 SCALE,
                 Rounding::Up,
-            )?;
+            )?)
+            .ok_or(TokenMillError::MathError)?;
 
         Ok((base_amount_swapped, quote_amount_swapped))
     }
@@ -306,15 +397,27 @@ impl Market {
         let price_curve = &self.ask_prices;
         let circulating_supply = self.circulating_supply();
 
-        let normalized_supply = u128::from(circulating_supply) * SCALE / u128::from(BASE_PRECISION);
+        let normalized_supply = u128::from(circulating_supply)
+            .checked_mul(SCALE)
+            .and_then(|v| v.checked_div(u128::from(BASE_PRECISION)))
+            .ok_or(TokenMillError::MathError)?;
 
         let quote_precision = u128::pow(10, u32::from(self.quote_token_decimals));
-        let mut normalized_quote_amount_left = u128::from(quote_amount) * SCALE / quote_precision;
-        let mut normalized_base_amount = 0;
+        let mut normalized_quote_amount_left = u128::from(quote_amount)
+            .checked_mul(SCALE)
+            .and_then(|v| v.checked_div(quote_precision))
+            .ok_or(TokenMillError::MathError)?;
+        let mut normalized_base_amount: u128 = 0;
 
-        let mut i = usize::try_from(normalized_supply / u128::from(self.width_scaled))
-            .map_err(|_| TokenMillError::MathError)?;
-        let mut interval_supply_already_used = normalized_supply % u128::from(self.width_scaled);
+        let mut i = usize::try_from(
+            normalized_supply
+                .checked_div(u128::from(self.width_scaled))
+                .ok_or(TokenMillError::MathError)?,
+        )
+        .map_err(|_| TokenMillError::MathError)?;
+        let mut interval_supply_already_used = normalized_supply
+            .checked_rem(u128::from(self.width_scaled))
+            .ok_or(TokenMillError::MathError)?;
 
         let mut price_0 = price_curve[i];
 
@@ -329,8 +432,12 @@ impl Market {
                 normalized_quote_amount_left,
             )?;
 
-            normalized_base_amount += delta_base;
-            normalized_quote_amount_left -= delta_quote;
+            normalized_base_amount = normalized_base_amount
+                .checked_add(delta_base)
+                .ok_or(TokenMillError::MathError)?;
+            normalized_quote_amount_left = normalized_quote_amount_left
+                .checked_sub(delta_quote)
+                .ok_or(TokenMillError::MathError)?;
 
             interval_supply_already_used = 0;
             price_0 = price_1;
@@ -339,17 +446,22 @@ impl Market {
         }
 
         let base_amount_swapped = div(
-            normalized_base_amount * u128::from(BASE_PRECISION),
+            normalized_base_amount
+                .checked_mul(u128::from(BASE_PRECISION))
+                .ok_or(TokenMillError::MathError)?,
             SCALE,
             Rounding::Down,
         )?;
 
         let quote_amount_swapped = quote_amount
-            - div(
-                normalized_quote_amount_left * quote_precision,
+            .checked_sub(div(
+                normalized_quote_amount_left
+                    .checked_mul(quote_precision)
+                    .ok_or(TokenMillError::MathError)?,
                 SCALE,
                 Rounding::Down,
-            )?;
+            )?)
+            .ok_or(TokenMillError::MathError)?;
 
         Ok((base_amount_swapped, quote_amount_swapped))
     }
